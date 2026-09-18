@@ -1,0 +1,29 @@
+# Environment & Secrets
+.env
+*.env.local
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local databases & persistent stores
+macrotrack_local.db
+macrotrack_local.db-journal
+episodic_memory_store.json
+qdrant_mem0_data/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
