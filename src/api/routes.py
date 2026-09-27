@@ -178,6 +178,29 @@ def get_protein_density_endpoint(dietary: Optional[str] = None):
 def get_kg_schema_endpoint():
     return kg.get_all_graph_elements()
 
+# ----------------- Foods & Anuvaad Dataset -----------------
+@router.get("/foods/search")
+def search_foods_endpoint(query: str = "", limit: int = 20, category: Optional[str] = None):
+    from src.data.repository import food_repository
+    foods = food_repository.search_foods(query=query, limit=limit, category=category)
+    return {
+        "count": len(foods),
+        "results": [f.to_dict() for f in foods]
+    }
+
+@router.get("/foods/match")
+def match_food_endpoint(query: str):
+    from src.data.repository import food_repository
+    return food_repository.search_food(query).to_dict()
+
+@router.get("/foods/{food_code}")
+def get_food_by_code_endpoint(food_code: str):
+    from src.data.repository import food_repository
+    food = food_repository.get_food_by_code(food_code)
+    if not food:
+        raise HTTPException(status_code=404, detail=f"Food code '{food_code}' not found in Anuvaad dataset.")
+    return food.to_dict()
+
 # ----------------- Memory Management -----------------
 @router.post("/memory/reset")
 def reset_memory_endpoint(user_id: str = "default_user"):
@@ -197,6 +220,12 @@ def whatsapp_webhook(req: WhatsAppWebhookRequest):
         user_id=user_id,
         text_input=req.Body
     )
+    if not swarm_res["success"]:
+        response_message = swarm_res["message"]
+        if swarm_res.get("candidates"):
+            response_message += "\n" + "\n".join(swarm_res["candidates"])
+        return {"response_message": response_message, "swarm_result": swarm_res}
+
     nt = swarm_res["nutrition_totals"]
     rem = swarm_res["daily_status"]["remaining"]
     wa_reply = (

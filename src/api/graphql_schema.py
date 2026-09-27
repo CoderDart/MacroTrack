@@ -126,6 +126,21 @@ class Query:
             ))
         return items
 
+    @strawberry.field
+    def food_search(self, query: str = "", limit: int = 10) -> typing.List[FoodLeaderboardItemType]:
+        from src.data.repository import food_repository
+        foods = food_repository.search_foods(query=query, limit=limit)
+        return [
+            FoodLeaderboardItemType(
+                food_id=f.food_code,
+                food_name=f.name,
+                category=f.category,
+                dietary=f.dietary,
+                protein_density_score=round(f.per_100g.protein_g / max(f.per_100g.calories, 1.0), 3)
+            )
+            for f in foods
+        ]
+
 @strawberry.type
 class Mutation:
     @strawberry.mutation

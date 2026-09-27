@@ -9,6 +9,7 @@ from src.agents.reminder_agent import reminder_agent
 from src.agents.kg_agent import kg_agent
 from src.memory.episodic import memory
 from src.database.storage import db
+from src.data.types import AMBIGUOUS_MESSAGE, NOT_FOUND_MESSAGE
 
 logger = logging.getLogger("macrotrack.coordinator")
 
@@ -33,7 +34,8 @@ class MacroTrackCoordinator:
         image_input: Optional[Any] = None,
         is_packaged_label: bool = False,
         explicit_meal_type: Optional[str] = None,
-        log_time_str: Optional[str] = None
+        log_time_str: Optional[str] = None,
+        food_selections: Optional[Dict[str, str]] = None
     ) -> Dict[str, Any]:
         """
         End-to-end swarm execution pipeline:
@@ -53,6 +55,15 @@ class MacroTrackCoordinator:
         )
         detected_meal_type = explicit_meal_type or parse_result.get("meal_type", "meal")
         food_items = parse_result.get("foods", [])
+        for item in food_items:
+            query = item.get("food_name") or item.get("name", "")
+            selected_name = (food_selections or {}).get(query)
+            if selected_name:
+                match_result = nutrition_lookup.repository.search_food(query)
+                if match_result.status == "ambiguous" and any(
+                    candidate.name == selected_name for candidate in match_result.matches
+                ):
+                    item["food_name"] = selected_name
         agent_traces[-1]["output"] = {
             "modality": parse_result.get("detected_modality"),
             "items_count": len(food_items),
@@ -69,6 +80,34 @@ class MacroTrackCoordinator:
             "fat": nutrition_totals["fat"]
         }
 
+        verified_items = [item for item in nutrition_totals["items"] if item["found"]]
+        if not verified_items or nutrition_totals.get("ambiguous_items"):
+            ambiguous_items = nutrition_totals.get("ambiguous_items", [])
+            is_ambiguous = bool(ambiguous_items)
+            candidates = list(dict.fromkeys(
+                candidate
+                for item in ambiguous_items
+                for candidate in item["candidates"]
+            ))
+            message = AMBIGUOUS_MESSAGE if is_ambiguous else NOT_FOUND_MESSAGE
+            daily_status = goal_tracker.get_daily_status(user_id, today_str)
+            agent_traces[-1]["status"] = "not_logged"
+            return {
+                "success": False,
+                "logged": False,
+                "status": "ambiguous" if is_ambiguous else "not_found",
+                "message": message,
+                "candidates": candidates,
+                "meal_record": None,
+                "parsed_items": nutrition_totals["items"],
+                "nutrition_totals": nutrition_totals,
+                "daily_status": daily_status,
+                "feedback": {"coach_assessment": message, "cautions": [message]},
+                "adaptive_reminders": {},
+                "knowledge_graph_pathways": [],
+                "agent_swarm_traces": agent_traces
+            }
+
         # Step 3: Persist Log to Database (Supabase / SQLite)
         meal_record = {
             "user_id": user_id,
@@ -76,7 +115,7 @@ class MacroTrackCoordinator:
             "meal_type": detected_meal_type,
             "raw_input": text_input or ("Image upload" if image_input else "Mixed log"),
             "input_modality": parse_result.get("detected_modality", "text"),
-            "items": nutrition_totals["items"],
+            "items": verified_items,
             "calories": nutrition_totals["calories"],
             "protein": nutrition_totals["protein"],
             "carbs": nutrition_totals["carbs"],
@@ -88,7 +127,7 @@ class MacroTrackCoordinator:
         # Step 4: Episodic Memory (mem0)
         agent_traces.append({"agent": "EpisodicMemory (mem0)", "status": "invoked"})
         item_names = []
-        for i in nutrition_totals["items"]:
+        for i in verified_items:
             q = i.get("quantity", 1)
             u = i.get("unit", "")
             f_name = i.get("matched_food") or i.get("food_name")
@@ -115,6 +154,10 @@ class MacroTrackCoordinator:
         # Step 6: Feedback & Suggestion Agent
         agent_traces.append({"agent": "FeedbackAgent", "status": "invoked"})
         feedback = feedback_agent.generate_realtime_feedback(user_id, nutrition_totals, daily_status)
+        if nutrition_totals.get("missing_items"):
+            missing_msg = NOT_FOUND_MESSAGE
+            feedback["coach_assessment"] = f"{missing_msg} {feedback['coach_assessment']}"
+            feedback["cautions"].append(missing_msg)
         agent_traces[-1]["output"] = feedback["coach_assessment"]
 
         # Step 7: Adaptive Reminder Agent
@@ -129,7 +172,7 @@ class MacroTrackCoordinator:
         # Step 8: Knowledge Graph Agent (Enrich logged foods with biological pathways)
         agent_traces.append({"agent": "KnowledgeGraphAgent", "status": "invoked"})
         kg_pathways = []
-        for it in nutrition_totals["items"]:
+        for it in verified_items:
             name = it.get("matched_food") or it.get("food_name", "")
             pathway = kg_agent.explain_food_mechanism(name)
             if pathway.get("found"):
@@ -139,6 +182,7 @@ class MacroTrackCoordinator:
         return {
             "success": True,
             "meal_record": saved_record,
+            "message": NOT_FOUND_MESSAGE if nutrition_totals.get("missing_items") else None,
             "parsed_items": nutrition_totals["items"],
             "nutrition_totals": {
                 "calories": nutrition_totals["calories"],

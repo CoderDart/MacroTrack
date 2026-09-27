@@ -10,14 +10,26 @@ def test_root_endpoint():
     data = resp.json()
     assert data["status"] == "operational"
 
-def test_parse_meal_endpoint():
+def test_parse_meal_endpoint(monkeypatch):
+    from src.api.routes import meal_parser
+    monkeypatch.setattr(meal_parser, "parse_meal", lambda **kwargs: {
+        "detected_modality": "text",
+        "meal_type": "lunch",
+        "foods": [{"food_name": "Lemon Rice", "quantity": 1, "unit": "100g"}]
+    })
     resp = client.post("/api/meals/parse", json={"text": "2 chapatis with 1 bowl dal", "is_packaged_label": False})
     assert resp.status_code == 200
     data = resp.json()
     assert "nutrition_totals" in data
-    assert data["nutrition_totals"]["calories"] > 200
+    assert data["nutrition_totals"]["calories"] > 100
 
-def test_log_meal_text_endpoint():
+def test_log_meal_text_endpoint(monkeypatch):
+    from src.api.routes import meal_parser
+    monkeypatch.setattr(meal_parser, "parse_meal", lambda **kwargs: {
+        "detected_modality": "text",
+        "meal_type": "breakfast",
+        "foods": [{"food_name": "Lemon Rice", "quantity": 1, "unit": "100g"}]
+    })
     resp = client.post("/api/meals/log", json={
         "user_id": "test_api_user",
         "text": "1 bowl curd and 2 boiled eggs",
@@ -28,6 +40,31 @@ def test_log_meal_text_endpoint():
     assert data["success"] is True
     assert "nutrition_totals" in data
     assert "feedback" in data
+
+def test_food_match_endpoint_statuses():
+    found = client.get("/api/foods/match", params={"query": "LEMON-RICE"}).json()
+    assert found["status"] == "found"
+    assert found["food"]["name"].startswith("Lemon rice")
+
+    ambiguous = client.get("/api/foods/match", params={"query": "rice"}).json()
+    assert ambiguous["status"] == "ambiguous"
+    assert len(ambiguous["matches"]) > 1
+
+    missing = client.get("/api/foods/match", params={"query": "avocado toast"}).json()
+    assert missing["status"] == "not_found"
+    assert missing["message"] == "I'm sorry, that food is not available in the INDB dataset."
+
+def test_parse_endpoint_returns_unavailable_message(monkeypatch):
+    from src.api.routes import meal_parser
+    monkeypatch.setattr(meal_parser, "parse_meal", lambda **kwargs: {
+        "detected_modality": "text",
+        "meal_type": "snack",
+        "foods": [{"food_name": "avocado toast", "quantity": 1, "unit": "100g"}]
+    })
+    response = client.post("/api/meals/parse", json={"text": "avocado toast"})
+    totals = response.json()["nutrition_totals"]
+    assert totals["status"] == "not_found"
+    assert totals["message"] == "I'm sorry, that food is not available in the INDB dataset."
 
 def test_get_and_set_goals_endpoint():
     # Set goals
@@ -54,7 +91,13 @@ def test_kg_query_endpoint():
     data = resp.json()
     assert "top_foods" in data
 
-def test_whatsapp_webhook_endpoint():
+def test_whatsapp_webhook_endpoint(monkeypatch):
+    from src.api.routes import meal_parser
+    monkeypatch.setattr(meal_parser, "parse_meal", lambda **kwargs: {
+        "detected_modality": "text",
+        "meal_type": "lunch",
+        "foods": [{"food_name": "Lemon Rice", "quantity": 1, "unit": "100g"}]
+    })
     resp = client.post("/api/webhook/whatsapp", json={
         "From": "whatsapp:+919876543210",
         "Body": "2 chapatis and 1 bowl dal tadka"

@@ -21,6 +21,7 @@ from src.agents.kg_agent import kg_agent
 from src.agents.coordinator import coordinator
 from src.memory.episodic import memory
 from src.graph.kg_engine import kg
+from src.data.repository import food_repository
 
 st.set_page_config(
     page_title="MacroTrack: Multi-Agent Nutrition System",
@@ -52,23 +53,25 @@ st.sidebar.write(f"**Target Protein:** {goals.get('protein', 150)}g")
 
 st.sidebar.divider()
 st.sidebar.subheader("System Architecture")
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 - **LLM:** Gemini 3.5 Flash
 - **Episodic Memory:** mem0
-- **Dataset:** INDb (ICMR-NIN)
+- **Dataset:** Anuvaad INDB ({food_repository.count()} Indian Foods)
+- **Portion Standard:** 100g Baseline
 - **Knowledge Graph:** Neo4j / NetworkX
 - **Storage:** Dual-Mode Supabase/SQLite
 """)
 
 # Top banner
 st.title("MacroTrack: Intelligent Multi-Agent Nutrition System")
-st.caption("Multimodal meal parser, INDb Indian database lookup, goal tracking, adaptive reminders, and knowledge graph reasoning.")
+st.caption("Powered by the Anuvaad INDB Dataset (1,014 Indian Foods & Recipes) on 100g portion standard.")
 
 tabs = st.tabs([
     "🍽️ Multimodal Meal Logger",
     "📊 Daily & Weekly Intake",
     "🧠 Nutrition Knowledge Graph",
     "⏰ Adaptive Reminders",
+    "📖 Anuvaad Food Database",
     "⚙️ Profile & Goal Settings"
 ])
 
@@ -84,8 +87,8 @@ with tabs[0]:
 
         st.markdown("**1. Describe Your Meal (Free-Form Text):**")
         meal_text_input = st.text_area(
-            "e.g., '2 chapatis with 1 bowl dal tadka and 100g curd'",
-            placeholder="Type your meal description here (Indian or global foods)...",
+            "e.g., '2 chapatis with 1 bowl dal and 100g paneer'",
+            placeholder="Type your meal description here (Indian dishes, e.g. roti, dal, paneer, biryani, idli)...",
             height=90
         )
 
@@ -101,7 +104,7 @@ with tabs[0]:
             st.image(image_preview, caption="Uploaded Food Image", use_container_width=True)
 
         if submit_btn:
-            with st.spinner("Agent Swarm collaborating: Parser -> INDb Lookup -> Goal Analysis -> Feedback -> Reminders..."):
+            with st.spinner("Agent Swarm collaborating: Parser -> Anuvaad Lookup -> Goal Analysis -> Feedback -> Reminders..."):
                 img_arg = image_preview if uploaded_file else None
                 swarm_result = coordinator.process_and_log_meal(
                     user_id=user_id,
@@ -111,59 +114,113 @@ with tabs[0]:
                     explicit_meal_type=meal_type_input,
                     log_time_str=time_str
                 )
+                st.session_state["pending_food_result"] = swarm_result
+                st.session_state["pending_food_request"] = {
+                    "user_id": user_id,
+                    "text_input": meal_text_input if meal_text_input.strip() else None,
+                    "image_input": img_arg,
+                    "is_packaged_label": is_packaged,
+                    "explicit_meal_type": meal_type_input,
+                    "log_time_str": time_str
+                }
 
-            st.success("✅ Meal Logged and Processed Successfully!")
+            if not swarm_result["success"]:
+                st.error(swarm_result["message"])
+            else:
+                st.session_state["pending_food_result"] = None
+                st.success("✅ Meal Logged and Processed Successfully!")
 
-            # Display Swarm Output
-            st.subheader("Agent Swarm Execution Summary")
-            nt = swarm_result["nutrition_totals"]
+                # Display Swarm Output
+                st.subheader("Agent Swarm Execution Summary")
+                nt = swarm_result["nutrition_totals"]
 
-            m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-            m_col1.metric("Calories", f"{nt['calories']} kcal")
-            m_col2.metric("Protein", f"{nt['protein']}g")
-            m_col3.metric("Carbohydrates", f"{nt['carbs']}g")
-            m_col4.metric("Fat", f"{nt['fat']}g")
+                m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                m_col1.metric("Calories", f"{nt['calories']} kcal")
+                m_col2.metric("Protein", f"{nt['protein']}g")
+                m_col3.metric("Carbohydrates", f"{nt['carbs']}g")
+                m_col4.metric("Fat", f"{nt['fat']}g")
 
-            # Table of parsed items
-            if swarm_result["parsed_items"]:
-                st.markdown("#### Parsed Items from INDb:")
-                items_df = pd.DataFrame([
-                    {
-                        "Item": it.get("matched_food", it.get("food_name")),
-                        "Qty": f"{it.get('quantity')} {it.get('unit')}",
-                        "Calories": f"{it.get('calories')} kcal",
-                        "Protein": f"{it.get('protein_g')}g",
-                        "Carbs": f"{it.get('carbs_g')}g",
-                        "Fat": f"{it.get('fat_g')}g",
-                        "Fiber": f"{it.get('fiber_g', 0)}g",
-                        "Source": it.get("database_source", "INDb")
-                    }
-                    for it in swarm_result["parsed_items"]
-                ])
-                st.dataframe(items_df, use_container_width=True)
+                # Show nutrition only for verified dataset records.
+                verified_items = [it for it in swarm_result["parsed_items"] if it.get("found")]
+                if verified_items:
+                    st.markdown("#### Verified Items in Anuvaad INDB (100g standard basis):")
+                    items_df = pd.DataFrame([
+                        {
+                            "Input Item": it.get("food_name"),
+                            "Matched Anuvaad Food": it.get("matched_food"),
+                            "Portion / Qty": f"{it.get('quantity')} {it.get('unit')}",
+                            "Calories": f"{it.get('calories')} kcal",
+                            "Protein": f"{it.get('protein_g')}g",
+                            "Carbs": f"{it.get('carbs_g')}g",
+                            "Fat": f"{it.get('fat_g')}g",
+                            "Status": "✅ Verified",
+                            "Source": it.get("database_source", "Anuvaad INDB")
+                        }
+                        for it in verified_items
+                    ])
+                    st.dataframe(items_df, use_container_width=True)
 
-            # Feedback and Coach Advice
-            fb = swarm_result["feedback"]
-            st.info(f"💡 **Coach Assessment:** {fb['coach_assessment']}")
+                # Unresolved items have no nutrition row.
+                for item in swarm_result["parsed_items"]:
+                    if item.get("status") == "not_found":
+                        st.warning(item["message"])
+                    elif item.get("status") == "ambiguous":
+                        st.info(item["message"])
 
-            if fb.get("next_meal_recommendations"):
-                st.markdown("#### 🎯 Next Meal Recommendations (Tailored Indian Foods):")
-                for rec in fb["next_meal_recommendations"]:
-                    st.markdown(f"- **{rec['suggestion']}**: {rec['why']}")
+                # Feedback and Coach Advice
+                fb = swarm_result["feedback"]
+                st.info(f"💡 **Coach Assessment:** {fb['coach_assessment']}")
 
-            # Adaptive Reminders Note
-            rem_info = swarm_result["adaptive_reminders"]
-            if rem_info.get("adaptive_shift_applied"):
-                st.warning(f"⏰ **Adaptive Reminder Alert:** {rem_info['explanation']}")
+                if fb.get("next_meal_recommendations"):
+                    st.markdown("#### 🎯 Next Meal Recommendations (Tailored Indian Foods):")
+                    for rec in fb["next_meal_recommendations"]:
+                        st.markdown(f"- **{rec['suggestion']}**: {rec['why']}")
 
-            # Knowledge Graph Biological Pathways
-            kg_paths = swarm_result.get("knowledge_graph_pathways", [])
-            if kg_paths:
-                st.markdown("#### 🔬 Biological Pathways Activated (Knowledge Graph):")
-                for kp in kg_paths:
-                    st.markdown(f"**{kp['food']}**:")
-                    for path in kp["pathway_details"]:
-                        st.caption(f"↳ {path['nutrient']} → {path['health_outcome']} → {path['target_goal']}")
+                # Adaptive Reminders Note
+                rem_info = swarm_result["adaptive_reminders"]
+                if rem_info.get("adaptive_shift_applied"):
+                    st.warning(f"⏰ **Adaptive Reminder Alert:** {rem_info['explanation']}")
+
+                # Knowledge Graph Biological Pathways
+                kg_paths = swarm_result.get("knowledge_graph_pathways", [])
+                if kg_paths:
+                    st.markdown("#### 🔬 Biological Pathways Activated (Knowledge Graph):")
+                    for kp in kg_paths:
+                        st.markdown(f"**{kp['food']}**:")
+                        for path in kp["pathway_details"]:
+                            st.caption(f"↳ {path['nutrient']} → {path['health_outcome']} → {path['target_goal']}")
+
+    pending_result = st.session_state.get("pending_food_result")
+    if pending_result and pending_result.get("status") == "ambiguous":
+        ambiguous_items = pending_result["nutrition_totals"].get("ambiguous_items", [])
+        with st.form("resolve_ambiguous_foods"):
+            selections = {
+                item["food_name"]: st.selectbox(
+                    f"Select the intended INDB food for {item['food_name']}",
+                    item["candidates"],
+                    key=f"food_match_{index}_{item['food_name']}"
+                )
+                for index, item in enumerate(ambiguous_items)
+            }
+            resolve_button = st.form_submit_button("Log selected foods")
+
+        if resolve_button:
+            pending_request = st.session_state["pending_food_request"]
+            resolved = coordinator.process_and_log_meal(
+                **pending_request,
+                food_selections=selections
+            )
+            if resolved["success"]:
+                st.session_state["pending_food_result"] = None
+                st.success("Meal logged using the selected INDB food records.")
+                totals = resolved["nutrition_totals"]
+                st.write(
+                    f"{totals['calories']} kcal · {totals['protein']}g protein · "
+                    f"{totals['carbs']}g carbs · {totals['fat']}g fat"
+                )
+            else:
+                st.session_state["pending_food_result"] = resolved
+                st.error(resolved["message"])
 
 # ----------------- TAB 2: Daily & Weekly Dashboard -----------------
 with tabs[1]:
@@ -254,10 +311,10 @@ with tabs[2]:
     st.markdown("""
     ```mermaid
     graph LR
-        subgraph Foods [Indian & Global Foods]
+        subgraph Foods [Anuvaad Indian Foods]
             A[Tandoori Chicken]
             B[Whey Protein]
-            C[Paneer]
+            C[Paneer Curry]
             D[Moong Dal]
             E[Boiled Egg White]
         end
@@ -337,8 +394,40 @@ with tabs[3]:
         mime="text/calendar"
     )
 
-# ----------------- TAB 5: Profile & Goals -----------------
+# ----------------- TAB 5: Anuvaad Food Database Browser -----------------
 with tabs[4]:
+    st.subheader("📖 Anuvaad INDB Food Dataset (1,014 Items)")
+    st.caption("Complete official Indian food composition database (ICMR-NIN). All values per 100g.")
+
+    b_col1, b_col2 = st.columns([3, 1])
+    with b_col1:
+        search_kw = st.text_input("Search Indian Food Name or Dish (e.g. roti, paneer, dal, tea)", value="")
+    with b_col2:
+        cat_filter = st.selectbox("Category Filter", ["All"] + food_repository.get_categories())
+
+    searched_foods = food_repository.search_foods(search_kw, limit=50, category=cat_filter)
+    st.write(f"Showing **{len(searched_foods)}** foods matching criteria:")
+
+    if searched_foods:
+        browse_df = pd.DataFrame([
+            {
+                "Code": f.food_code,
+                "Food Name": f.name,
+                "Category": f.category,
+                "Energy (kcal/100g)": f.per_100g.calories,
+                "Protein (g/100g)": f.per_100g.protein_g,
+                "Carbs (g/100g)": f.per_100g.carbs_g,
+                "Fat (g/100g)": f.per_100g.fat_g,
+                "Fiber (g/100g)": f.per_100g.fiber_g,
+                "Calcium (mg/100g)": f.per_100g.calcium_mg,
+                "Iron (mg/100g)": f.per_100g.iron_mg
+            }
+            for f in searched_foods
+        ])
+        st.dataframe(browse_df, use_container_width=True)
+
+# ----------------- TAB 6: Profile & Goals -----------------
+with tabs[5]:
     st.subheader("User Profile & Nutrition Goals")
 
     p_col1, p_col2 = st.columns(2)
@@ -368,7 +457,6 @@ with tabs[4]:
 
     with p_col2:
         st.markdown("#### Caloric & Macro Targets")
-        # Auto-calculator preview
         auto_calc = goal_tracker.calculate_auto_goals({
             "age": u_age, "gender": u_gender, "weight_kg": u_weight, "height_cm": u_height,
             "activity_level": u_activity, "goal_archetype": u_archetype

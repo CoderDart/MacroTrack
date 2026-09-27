@@ -8,9 +8,13 @@ load_dotenv(ROOT_DIR / ".env")
 
 # Paths
 DATA_DIR = ROOT_DIR / "data"
-INDB_PATH = DATA_DIR / "indb_foods.json"
+ANUVAAD_CSV_PATH = DATA_DIR / "Anuvaad_INDB_2024.11.csv"
+ANUVAAD_PATH = ANUVAAD_CSV_PATH  # Alias for backwards compatibility
 KG_PATH = DATA_DIR / "knowledge_graph.json"
 LOCAL_DB_PATH = ROOT_DIR / "macrotrack_local.db"
+
+# Default measurement baseline (100 grams)
+DEFAULT_PORTION_GRAMS = 100.0
 
 # LLM Configuration
 # User requested Gemini 3.5 Flash
