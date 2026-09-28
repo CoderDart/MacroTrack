@@ -20,7 +20,6 @@ from src.agents.reminder_agent import reminder_agent
 from src.agents.kg_agent import kg_agent
 from src.agents.coordinator import coordinator
 from src.memory.episodic import memory
-from src.graph.kg_engine import kg
 from src.data.repository import food_repository
 
 st.set_page_config(
@@ -58,7 +57,7 @@ st.sidebar.markdown(f"""
 - **Episodic Memory:** mem0
 - **Dataset:** Anuvaad INDB ({food_repository.count()} Indian Foods)
 - **Portion Standard:** 100g Baseline
-- **Knowledge Graph:** Neo4j / NetworkX
+- **Knowledge Graph:** INDB query graph
 - **Storage:** Dual-Mode Supabase/SQLite
 """)
 
@@ -184,11 +183,11 @@ with tabs[0]:
                 # Knowledge Graph Biological Pathways
                 kg_paths = swarm_result.get("knowledge_graph_pathways", [])
                 if kg_paths:
-                    st.markdown("#### 🔬 Biological Pathways Activated (Knowledge Graph):")
+                    st.markdown("#### INDB Nutrient Composition (per 100g):")
                     for kp in kg_paths:
                         st.markdown(f"**{kp['food']}**:")
                         for path in kp["pathway_details"]:
-                            st.caption(f"↳ {path['nutrient']} → {path['health_outcome']} → {path['target_goal']}")
+                            st.caption(f"{path['nutrient']}: {path['value_per_100g']} {path['unit']}")
 
     pending_result = st.session_state.get("pending_food_result")
     if pending_result and pending_result.get("status") == "ambiguous":
@@ -268,93 +267,74 @@ with tabs[1]:
 # ----------------- TAB 3: Knowledge Graph -----------------
 with tabs[2]:
     st.subheader("Nutrition Knowledge Graph Explorer")
-    st.caption("Food → Nutrient → Health Outcome → User Goal graph database")
+    st.caption("Query results and nutrient values are sourced from Anuvaad INDB per 100g.")
 
-    col_q1, col_q2 = st.columns([3, 1])
-    with col_q1:
-        kg_question = st.text_input(
-            "Natural Language Graph Query",
-            value="Which foods help me reach protein target fastest?"
-        )
-    with col_q2:
-        run_kg_btn = st.button("Run Graph Query", type="primary")
+    def run_kg_query():
+        question = st.session_state.get("kg_question_input", "").strip()
+        if not question:
+            return
+        st.session_state.pop("kg_query_result", None)
+        st.session_state["kg_active_query"] = question
+        st.session_state["kg_query_result"] = kg_agent.answer_kg_question(question)
 
-    if run_kg_btn or kg_question:
-        kg_res = kg_agent.answer_kg_question(kg_question)
-        st.success(f"**Knowledge Graph Result for:** '{kg_question}'")
+    kg_question = st.text_input(
+        "Natural Language Graph Query",
+        value="",
+        key="kg_question_input",
+        on_change=run_kg_query,
+    )
+    st.button("Run Graph Query", type="primary", on_click=run_kg_query)
 
-        if "top_foods" in kg_res:
-            st.markdown(f"*{kg_res.get('clinical_insight')}*")
-            df_kg = pd.DataFrame([
-                {
-                    "Rank": idx + 1,
-                    "Food": tf["food_name"],
-                    "Category": tf["category"],
-                    "Dietary": tf["dietary"],
-                    "Protein Density Score (g/kcal)": f"{tf['protein_density_score']:.3f}",
-                    "Key Nutrients": ", ".join(tf.get("key_nutrients", []))
-                }
-                for idx, tf in enumerate(kg_res["top_foods"])
-            ])
-            st.dataframe(df_kg, use_container_width=True)
+    kg_res = st.session_state.get("kg_query_result")
+    valid_kg_statuses = {"found", "ambiguous", "not_found", "no_results", "clarification"}
+    if kg_res is not None and (
+        not isinstance(kg_res, dict) or kg_res.get("status") not in valid_kg_statuses
+    ):
+        st.session_state.pop("kg_query_result", None)
+        kg_res = None
 
-        elif "clinical_summary" in kg_res:
-            st.markdown(kg_res["clinical_summary"])
+    if kg_res:
+        if kg_res["status"] == "clarification":
+            st.info(kg_res["message"])
+        elif kg_res["status"] == "not_found":
+            st.error(kg_res["message"])
+        elif kg_res["status"] == "no_results":
+            st.info(kg_res["message"])
+        elif kg_res["status"] == "ambiguous":
+            st.info(kg_res["message"])
+            with st.form("resolve_kg_food"):
+                selected_kg_food = st.selectbox("Select an INDB record", kg_res["candidates"])
+                resolve_kg_food = st.form_submit_button("Show selected food")
+            if resolve_kg_food:
+                st.session_state["kg_query_result"] = kg_agent.answer_kg_question(
+                    kg_res["query"], selected_food=selected_kg_food
+                )
+                st.rerun()
+        elif kg_res["status"] == "found":
+            with st.expander("Query interpretation", expanded=True):
+                st.json(kg_res["interpreted_intent"])
+                if kg_res.get("ranking"):
+                    st.caption(f"Dataset: INDB · Ranking: {kg_res['ranking']['sort']}")
+                    if kg_res["ranking"].get("thresholds"):
+                        st.json(kg_res["ranking"]["thresholds"])
 
-        elif "matched_foods" in kg_res or "recommended_foods" in kg_res:
-            f_list = kg_res.get("matched_foods") or kg_res.get("recommended_foods", [])
-            st.markdown(f"*{kg_res.get('clinical_insight')}*")
-            st.dataframe(pd.DataFrame(f_list), use_container_width=True)
-
-    st.divider()
-    st.subheader("Knowledge Graph Schema & Multi-Hop Path Visualizer")
-    st.markdown("""
-    ```mermaid
-    graph LR
-        subgraph Foods [Anuvaad Indian Foods]
-            A[Tandoori Chicken]
-            B[Whey Protein]
-            C[Paneer Curry]
-            D[Moong Dal]
-            E[Boiled Egg White]
-        end
-
-        subgraph Nutrients [Bioactive Nutrients]
-            N1[Leucine & BCAAs]
-            N2[Casein]
-            N3[Dietary Fiber]
-            N4[Elemental Calcium]
-        end
-
-        subgraph Outcomes [Metabolic Outcomes]
-            O1[Muscle Protein Synthesis]
-            O2[Prolonged Gastric Satiety]
-            O3[Bone Mineral Remodeling]
-        end
-
-        subgraph Goals [User Goals]
-            G1[Muscle Hypertrophy]
-            G2[Weight Loss & Satiety]
-            G3[Bone Vitality]
-        end
-
-        A --> N1
-        B --> N1
-        E --> N1
-        C --> N2
-        C --> N4
-        D --> N3
-
-        N1 --> O1
-        N2 --> O1
-        N3 --> O2
-        N4 --> O3
-
-        O1 --> G1
-        O2 --> G2
-        O3 --> G3
-    ```
-    """)
+            rows = []
+            for result in kg_res["results"]:
+                nutrition = result["nutrition_per_100g"]
+                rows.append({
+                    "Rank": result["rank"],
+                    "Food": result["food_name"],
+                    "INDB ID": result["food_id"],
+                    "Ranked value / 100g": result["ranked_value_per_100g"],
+                    "Calories / 100g": nutrition["calories"],
+                    "Protein / 100g": nutrition["protein"],
+                    "Carbohydrates / 100g": nutrition["carbohydrates"],
+                    "Fat / 100g": nutrition["fat"],
+                    "Fiber / 100g": nutrition["fiber"],
+                    "Why selected": result["selection_reason"],
+                })
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.graphviz_chart(kg_res["graph"]["graphviz"], use_container_width=True)
 
 # ----------------- TAB 4: Adaptive Reminders -----------------
 with tabs[3]:

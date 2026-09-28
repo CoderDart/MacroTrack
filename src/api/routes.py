@@ -14,7 +14,6 @@ from src.agents.reminder_agent import reminder_agent
 from src.agents.kg_agent import kg_agent
 from src.agents.coordinator import coordinator
 from src.memory.episodic import memory
-from src.graph.kg_engine import kg
 
 router = APIRouter(prefix="/api")
 
@@ -175,8 +174,15 @@ def get_protein_density_endpoint(dietary: Optional[str] = None):
     return kg_agent.query_fastest_protein_foods(dietary)
 
 @router.get("/knowledge-graph/schema")
-def get_kg_schema_endpoint():
-    return kg.get_all_graph_elements()
+def get_kg_schema_endpoint(query: str = ""):
+    if not query.strip():
+        return {"status": "awaiting_query", "nodes": [], "edges": []}
+    result = kg_agent.answer_kg_question(query)
+    return {
+        "status": result["status"],
+        "message": result.get("message"),
+        "graph": result["graph"],
+    }
 
 # ----------------- Foods & Anuvaad Dataset -----------------
 @router.get("/foods/search")

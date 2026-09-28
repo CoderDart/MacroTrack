@@ -1,6 +1,6 @@
 # MacroTrack: Multi-Agent Clinical Nutrition Tracking System
 
-MacroTrack is a multimodal, multi-agent clinical nutrition tracking and coaching system tailored for Indian diets, powered by **Gemini 3.5 Flash**, **mem0** episodic memory, the **Anuvaad INDB Dataset** (1,014 Indian Foods & Recipes from ICMR-NIN), a **Nutrition Knowledge Graph**, adaptive reminders, and dual REST + GraphQL APIs.
+MacroTrack is a multimodal, multi-agent clinical nutrition tracking and coaching system tailored for Indian diets, powered by **Gemini 3.5 Flash**, **mem0** episodic memory, the **Anuvaad INDB Dataset** (1,014 Indian Foods & Recipes from ICMR-NIN), a query-driven nutrition graph, adaptive reminders, and dual REST + GraphQL APIs.
 
 ---
 
@@ -21,7 +21,7 @@ flowchart TD
         GoalTracker[3. Goal Tracking Agent\nMifflin-St Jeor TDEE & Macro Deficit/Surplus]
         FeedbackAgent[4. Feedback & Suggestion Agent\nReal-time critiques, next-meal Indian suggestions]
         ReminderAgent[5. Adaptive Reminder Agent\nDynamic slippage rescheduling, Push & .ics]
-        KGAgent[6. Knowledge Graph Agent\nFood -> Nutrient -> Outcome -> Goal Reasoning]
+        KGAgent[6. Knowledge Graph Agent\nIntent -> INDB Query -> Per-100g Rank -> Graph]
     end
 
     Orchestrator --> MealParser
@@ -30,17 +30,16 @@ flowchart TD
     NutriLookup --> GoalTracker
     GoalTracker --> FeedbackAgent
     GoalTracker --> ReminderAgent
-    NutriLookup --> KGAgent
+    KGAgent --> Repo
+    KGAgent --> QueryGraph[Query-specific graph visualization]
 
     subgraph Data_Layer [Persistent Storage]
         Mem0[(mem0 Episodic Memory)]
         DB[(Supabase / SQLite Dual-Mode)]
-        GraphDB[(Knowledge Graph: Neo4j / NetworkX)]
     end
 
     Swarm <--> Mem0
     Swarm <--> DB
-    Swarm <--> GraphDB
 ```
 
 ---

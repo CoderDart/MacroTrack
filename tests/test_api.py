@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from src.api.app import app
+from src.data.repository import food_repository
 
 client = TestClient(app)
 
@@ -85,11 +86,22 @@ def test_get_and_set_goals_endpoint():
 
 def test_kg_query_endpoint():
     resp = client.post("/api/knowledge-graph/query", json={
-        "question": "Which foods help me reach protein target fastest?"
+        "question": "carb rich food"
     })
     assert resp.status_code == 200
     data = resp.json()
-    assert "top_foods" in data
+    assert data["status"] == "found"
+    assert data["ranking"]["sort"] == "carbohydrates per 100g DESC"
+    carb_values = [row["nutrition_per_100g"]["carbohydrates"] for row in data["results"]]
+    assert carb_values == sorted(carb_values, reverse=True)
+    assert all(food_repository.get_food_by_id(row["food_id"]) for row in data["results"])
+
+    empty_schema = client.get("/api/knowledge-graph/schema").json()
+    assert empty_schema == {"status": "awaiting_query", "nodes": [], "edges": []}
+
+    graph_response = client.get("/api/knowledge-graph/schema", params={"query": "low calorie foods"}).json()
+    assert graph_response["status"] == "found"
+    assert any(node["type"] == "food" for node in graph_response["graph"]["nodes"])
 
 def test_whatsapp_webhook_endpoint(monkeypatch):
     from src.api.routes import meal_parser

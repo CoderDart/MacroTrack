@@ -10,7 +10,6 @@ load_dotenv(ROOT_DIR / ".env")
 DATA_DIR = ROOT_DIR / "data"
 ANUVAAD_CSV_PATH = DATA_DIR / "Anuvaad_INDB_2024.11.csv"
 ANUVAAD_PATH = ANUVAAD_CSV_PATH  # Alias for backwards compatibility
-KG_PATH = DATA_DIR / "knowledge_graph.json"
 LOCAL_DB_PATH = ROOT_DIR / "macrotrack_local.db"
 
 # Default measurement baseline (100 grams)
@@ -28,11 +27,6 @@ MEM0_USER_ID = os.getenv("MEM0_USER_ID", "default_user")
 # Database (Supabase with Local SQLite fallback)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-
-# Knowledge Graph (Neo4j with In-Memory NetworkX fallback)
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
 # Server Config
 HOST = os.getenv("HOST", "0.0.0.0")

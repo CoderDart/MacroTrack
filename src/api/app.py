@@ -43,7 +43,7 @@ def root_endpoint():
         "llm_engine": "Gemini 3.5 Flash",
         "memory_layer": "mem0 Episodic Memory",
         "database": "INDb (Indian Food Composition Tables) + Supabase/SQLite",
-        "knowledge_graph": "Neo4j / NetworkX Multi-Hop Graph Engine",
+        "knowledge_graph": "Query-driven Anuvaad INDB graph",
         "endpoints": {
             "rest_docs": "/docs",
             "graphql_explorer": "/graphql",

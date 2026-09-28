@@ -144,9 +144,11 @@ def test_adaptive_reminder_shift():
 def test_knowledge_graph_agent():
     top_protein = kg_agent.query_fastest_protein_foods()
     assert len(top_protein["top_foods"]) > 0
-    assert top_protein["top_foods"][0]["protein_density_score"] > 0.1
+    assert top_protein["top_foods"][0]["ranked_nutrient"] == "Protein"
+    assert top_protein["top_foods"][0]["ranked_value_per_100g"] > 0
+    assert top_protein["top_foods"][0]["source"] == "INDB"
 
-    paneer_path = kg_agent.explain_food_mechanism("paneer")
+    paneer_path = kg_agent.explain_food_mechanism("Paneer, apple and pineapple salad")
     assert paneer_path["found"] is True
     assert len(paneer_path["pathway_details"]) > 0
 
