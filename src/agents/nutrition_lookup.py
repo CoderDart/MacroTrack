@@ -60,9 +60,62 @@ class NutritionLookupAgent:
             return result.to_dict()
 
         food = search_result.food
+        unit_clean = (unit or "100g").lower().strip()
+        source = food.source
+        if source == "user_custom":
+            nutrition = (food.per_serving if getattr(food, "nutrition_basis", "serving") == "serving" else food.per_100g)
+            if unit_clean in ("g", "gram", "grams"):
+                factor = quantity / 100.0 if getattr(food, "nutrition_basis", "serving") == "100g" else 0.0
+            elif unit_clean in ("kg", "kilogram"):
+                factor = (quantity * 1000.0) / 100.0 if getattr(food, "nutrition_basis", "serving") == "100g" else 0.0
+            elif unit_clean in ("serving", "servings", "bowl", "cup", "plate", "piece"):
+                factor = quantity
+            elif unit_clean in ("100g", "100gms", "100gm"):
+                factor = quantity if getattr(food, "nutrition_basis", "serving") == "100g" else quantity / 100.0
+            else:
+                factor = quantity
+
+            if getattr(food, "nutrition_basis", "serving") == "100g":
+                cal = nutrition.calories * factor
+                prot = nutrition.protein_g * factor
+                carb = nutrition.carbs_g * factor
+                fat = nutrition.fat_g * factor
+                fib = nutrition.fiber_g * factor
+                calc = nutrition.calcium_mg * factor
+                fe = nutrition.iron_mg * factor
+            else:
+                cal = nutrition.calories * factor
+                prot = nutrition.protein_g * factor
+                carb = nutrition.carbs_g * factor
+                fat = nutrition.fat_g * factor
+                fib = nutrition.fiber_g * factor
+                calc = nutrition.calcium_mg * factor
+                fe = nutrition.iron_mg * factor
+
+            result = NutritionLookupResult(
+                food_name=food_name,
+                matched_food=food.name,
+                food_code=food.food_code,
+                category=food.category,
+                quantity=quantity,
+                unit=unit,
+                found=True,
+                status="found",
+                calories=cal,
+                protein_g=prot,
+                carbs_g=carb,
+                fat_g=fat,
+                fiber_g=fib,
+                calcium_mg=calc,
+                iron_mg=fe,
+                database_source="user_custom",
+                match_type=search_result.match_type,
+                confidence=search_result.confidence,
+                message=None
+            )
+            return result.to_dict()
 
         # Nutrition calculation based on 100g standard baseline
-        unit_clean = (unit or "100g").lower().strip()
         per_100g = food.per_100g
 
         if unit_clean in ("g", "gram", "grams"):
@@ -72,7 +125,6 @@ class NutritionLookupAgent:
         elif unit_clean in ("100g", "100gms", "100gm"):
             factor = quantity
         else:
-            # Default to 100g portion unit factor
             factor = quantity
 
         cal = per_100g.calories * factor

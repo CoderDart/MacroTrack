@@ -4,6 +4,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from difflib import SequenceMatcher
 from src.data.types import AMBIGUOUS_MESSAGE, FoodItem, FoodSearchResult, NOT_FOUND_MESSAGE
 from src.data.loader import AnuvaadCSVLoader
+from src.database.storage import db
 
 logger = logging.getLogger("macrotrack.data.repository")
 
@@ -20,6 +21,36 @@ class FoodRepository:
         self._alias_index: Dict[str, List[FoodItem]] = {}
         self._is_loaded: bool = False
         self.load()
+
+    def _get_custom_foods(self, user_id: Optional[str] = None) -> List[FoodItem]:
+        if user_id in (None, "default_user"):
+            rows = db.get_all_custom_foods()
+        else:
+            rows = db.get_custom_foods_for_user(user_id)
+        return [FoodItem.from_custom_food(item) for item in rows]
+
+    def _search_custom_items(self, query: str, user_id: Optional[str] = None) -> List[FoodItem]:
+        q = self._normalize(query)
+        if not q:
+            return []
+        custom_items = self._get_custom_foods(user_id)
+        matches: List[FoodItem] = []
+        for item in custom_items:
+            searchable = [item.name, item.english_name, *item.aliases]
+            normalized_values = [self._normalize(v) for v in searchable if v]
+            if q in normalized_values:
+                matches.append(item)
+                continue
+            candidate_tokens = set(q.split())
+            if candidate_tokens and any(
+                candidate_tokens.issubset(set(self._normalize(value).split()))
+                for value in normalized_values
+            ):
+                matches.append(item)
+                continue
+            if any(SequenceMatcher(None, q, self._normalize(value)).ratio() >= 0.7 for value in normalized_values if value):
+                matches.append(item)
+        return matches
 
     def load(self, force: bool = False) -> None:
         """Loads and indexes the Anuvaad dataset."""
@@ -79,7 +110,7 @@ class FoodRepository:
             status="ambiguous", query=query, matches=unique, message=AMBIGUOUS_MESSAGE
         )
 
-    def search_food(self, query: str) -> FoodSearchResult:
+    def search_food(self, query: str, user_id: Optional[str] = None) -> FoodSearchResult:
         """Find a dataset record only when the match is sufficiently reliable."""
         normalized = self._normalize(query)
         if not normalized:
@@ -96,6 +127,12 @@ class FoodRepository:
                     )
                 ]
             result = self._result(query, exact_matches, "exact", 1.0)
+            self._log_result(result)
+            return result
+
+        custom_matches = self._search_custom_items(query, user_id=user_id)
+        if custom_matches:
+            result = self._result(query, custom_matches, "exact", 1.0)
             self._log_result(result)
             return result
 
@@ -142,12 +179,13 @@ class FoodRepository:
         result = self.search_food(query)
         return result.food if result.status == "found" else None
 
-    def search_foods(self, query: str, limit: int = 20, category: Optional[str] = None) -> List[FoodItem]:
+    def search_foods(self, query: str, limit: int = 20, category: Optional[str] = None, user_id: Optional[str] = None) -> List[FoodItem]:
         """Search foods with optional category filter for UI/Autocomplete."""
         q = query.strip().lower()
         results: List[Tuple[float, FoodItem]] = []
+        all_items = self._foods + self._get_custom_foods(user_id)
 
-        for item in self._foods:
+        for item in all_items:
             if category and category.lower() != "all" and item.category.lower() != category.lower():
                 continue
 
@@ -157,7 +195,7 @@ class FoodRepository:
                 score = 1.0 if q == name_lower else 0.8
             else:
                 for alias in item.aliases:
-                    if q in alias:
+                    if q in alias.lower():
                         score = max(score, 0.75)
                         break
 

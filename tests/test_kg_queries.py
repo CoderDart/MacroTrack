@@ -71,6 +71,34 @@ def test_rice_filter_ranks_only_matching_indb_foods():
     assert values == sorted(values, reverse=True)
 
 
+def test_custom_food_is_included_in_knowledge_graph_and_source_is_labeled():
+    from src.database.storage import db
+
+    db.delete_custom_foods_for_user("kg_custom_user")
+    db.save_custom_food({
+        "user_id": "kg_custom_user",
+        "name": "My Morning Oats",
+        "description": "100g oats, 1 scoop whey, 1 banana and 1 teaspoon peanut butter",
+        "nutrition_basis": "serving",
+        "serving_size": 1.0,
+        "serving_name": "1 bowl",
+        "nutrition": {
+            "calories": 650,
+            "protein": 40,
+            "carbohydrates": 75,
+            "fat": 20,
+            "fiber": 10,
+            "sugar": 15,
+            "sodium": 200,
+        },
+    })
+
+    result = kg_agent.answer_kg_question("My Morning Oats")
+    assert result["status"] == "found"
+    assert any(row["food_name"] == "My Morning Oats" for row in result["results"])
+    assert any(row["source"] == "User Custom" for row in result["results"])
+
+
 def test_unavailable_no_results_ambiguity_and_clarification_are_distinct():
     unavailable = kg_agent.answer_kg_question("avocado toast")
     assert unavailable["status"] == "not_found"

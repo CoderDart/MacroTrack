@@ -76,6 +76,21 @@ class DatabaseManager:
             )
             """)
             cursor.execute("""
+            CREATE TABLE IF NOT EXISTS custom_foods (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                source TEXT NOT NULL DEFAULT 'user_custom',
+                nutrition_basis TEXT NOT NULL DEFAULT 'serving',
+                serving_size REAL NOT NULL DEFAULT 1.0,
+                serving_name TEXT NOT NULL DEFAULT '1 serving',
+                nutrition TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """)
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS meal_reminders (
                 id TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -243,6 +258,142 @@ class DatabaseManager:
 
         return {"user_id": user_id, "calories": calories, "protein": protein, "carbs": carbs, "fat": fat}
 
+    # ------------------ Custom Foods ------------------
+    def save_custom_food(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        user_id = payload.get("user_id", "default_user")
+        food_id = payload.get("id") or f"custom_{user_id}_{int(datetime.now().timestamp() * 1000)}"
+        name = str(payload.get("name") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        if not name:
+            raise ValueError("Food name is required.")
+
+        nutrition = payload.get("nutrition") or {}
+        if not isinstance(nutrition, dict):
+            raise ValueError("Nutrition values must be provided as an object.")
+
+        cleaned_nutrition = {
+            "calories": float(nutrition.get("calories", 0.0) or 0.0),
+            "protein": float(nutrition.get("protein", 0.0) or 0.0),
+            "carbohydrates": float(nutrition.get("carbohydrates", 0.0) or 0.0),
+            "fat": float(nutrition.get("fat", 0.0) or 0.0),
+            "fiber": float(nutrition.get("fiber", 0.0) or 0.0),
+            "sugar": float(nutrition.get("sugar", 0.0) or 0.0),
+            "sodium": float(nutrition.get("sodium", 0.0) or 0.0),
+        }
+        if any(value < 0 for value in cleaned_nutrition.values()):
+            raise ValueError("Nutrition values cannot be negative.")
+        if not any(cleaned_nutrition.values()):
+            raise ValueError("At least one nutrition value is required.")
+
+        serving_size = float(payload.get("serving_size", 1.0) or 1.0)
+        if serving_size <= 0:
+            raise ValueError("Serving size must be positive.")
+
+        record = {
+            "id": food_id,
+            "user_id": user_id,
+            "name": name,
+            "description": description,
+            "source": "user_custom",
+            "nutrition_basis": str(payload.get("nutrition_basis") or "serving").lower() or "serving",
+            "serving_size": serving_size,
+            "serving_name": str(payload.get("serving_name") or "1 serving").strip() or "1 serving",
+            "nutrition": cleaned_nutrition,
+            "created_at": payload.get("created_at") or datetime.now().isoformat(),
+            "updated_at": payload.get("updated_at") or datetime.now().isoformat(),
+        }
+
+        if self.use_supabase:
+            try:
+                self.supabase_client.table("custom_foods").upsert(record).execute()
+            except Exception as e:
+                print(f"[Supabase] save_custom_food error: {e}")
+
+        with self._get_sqlite_conn() as conn:
+            conn.execute("""
+            INSERT INTO custom_foods (id, user_id, name, description, source, nutrition_basis, serving_size, serving_name, nutrition, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                user_id=excluded.user_id,
+                name=excluded.name,
+                description=excluded.description,
+                source=excluded.source,
+                nutrition_basis=excluded.nutrition_basis,
+                serving_size=excluded.serving_size,
+                serving_name=excluded.serving_name,
+                nutrition=excluded.nutrition,
+                updated_at=excluded.updated_at
+            """, (
+                record["id"], record["user_id"], record["name"], record["description"], record["source"],
+                record["nutrition_basis"], record["serving_size"], record["serving_name"], json.dumps(record["nutrition"]),
+                record["created_at"], record["updated_at"]
+            ))
+            conn.commit()
+        return record
+
+    def get_all_custom_foods(self) -> List[Dict[str, Any]]:
+        with self._get_sqlite_conn() as conn:
+            rows = conn.execute("SELECT * FROM custom_foods ORDER BY name ASC").fetchall()
+            results = []
+            for row in rows:
+                data = dict(row)
+                data["nutrition"] = json.loads(data["nutrition"]) if isinstance(data["nutrition"], str) else data["nutrition"]
+                data["source"] = "user_custom"
+                results.append(data)
+            return results
+
+    def get_custom_foods_for_user(self, user_id: str = "default_user") -> List[Dict[str, Any]]:
+        with self._get_sqlite_conn() as conn:
+            rows = conn.execute("SELECT * FROM custom_foods WHERE user_id = ? ORDER BY name ASC", (user_id,)).fetchall()
+            results = []
+            for row in rows:
+                data = dict(row)
+                data["nutrition"] = json.loads(data["nutrition"]) if isinstance(data["nutrition"], str) else data["nutrition"]
+                data["source"] = "user_custom"
+                results.append(data)
+            return results
+
+    def get_custom_food_by_id(self, custom_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        with self._get_sqlite_conn() as conn:
+            if user_id:
+                row = conn.execute("SELECT * FROM custom_foods WHERE id = ? AND user_id = ?", (custom_id, user_id)).fetchone()
+            else:
+                row = conn.execute("SELECT * FROM custom_foods WHERE id = ?", (custom_id,)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            data["nutrition"] = json.loads(data["nutrition"]) if isinstance(data["nutrition"], str) else data["nutrition"]
+            data["source"] = "user_custom"
+            return data
+
+    def delete_custom_food_by_user(self, custom_id: str, user_id: Optional[str] = None) -> bool:
+        target_user_id = user_id or custom_id
+        if user_id is None and custom_id and custom_id != "default_user":
+            lookup = self.get_custom_foods_for_user(custom_id)
+            if lookup:
+                target_user_id = custom_id
+        if self.use_supabase:
+            try:
+                query = self.supabase_client.table("custom_foods").delete().eq("user_id", target_user_id)
+                if custom_id and user_id is not None:
+                    query = query.eq("id", custom_id)
+                query.execute()
+            except Exception as e:
+                print(f"[Supabase] delete_custom_food_by_user error: {e}")
+
+        with self._get_sqlite_conn() as conn:
+            if user_id is not None:
+                conn.execute("DELETE FROM custom_foods WHERE id = ? AND user_id = ?", (custom_id, user_id))
+            else:
+                conn.execute("DELETE FROM custom_foods WHERE user_id = ?", (target_user_id,))
+            conn.commit()
+        return True
+
+    def delete_custom_foods_for_user(self, user_id: str) -> None:
+        with self._get_sqlite_conn() as conn:
+            conn.execute("DELETE FROM custom_foods WHERE user_id = ?", (user_id,))
+            conn.commit()
+
     # ------------------ Meal Logs ------------------
     def log_meal(self, meal: Dict[str, Any]) -> Dict[str, Any]:
         meal_id = meal.get("id") or f"meal_{int(datetime.now().timestamp() * 1000)}"
@@ -347,6 +498,7 @@ class DatabaseManager:
         with self._get_sqlite_conn() as conn:
             conn.execute("DELETE FROM meal_logs WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM meal_reminders WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM custom_foods WHERE user_id = ?", (user_id,))
             conn.commit()
         return True
 

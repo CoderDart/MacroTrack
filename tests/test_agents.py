@@ -124,6 +124,56 @@ def test_goal_tracker_auto_calc():
     assert goals["tdee"] > 2400
     assert goals["protein"] >= 100.0
 
+
+def test_custom_food_search_and_logging_round_trip():
+    user_id = "custom_food_user"
+    db.delete_custom_food_by_user(user_id)
+    custom = db.save_custom_food({
+        "user_id": user_id,
+        "id": user_id,
+        "name": "My Morning Oats",
+        "description": "100g oats, 1 scoop whey, 1 banana and 1 teaspoon peanut butter",
+        "nutrition_basis": "serving",
+        "serving_size": 1.0,
+        "serving_name": "1 bowl",
+        "nutrition": {
+            "calories": 650,
+            "protein": 40,
+            "carbohydrates": 75,
+            "fat": 20,
+            "fiber": 10,
+            "sugar": 15,
+            "sodium": 200
+        }
+    })
+
+    search_result = food_repository.search_food("My Morning Oats")
+    assert search_result.status == "found"
+    assert search_result.food.source == "user_custom"
+    assert search_result.food.name == "My Morning Oats"
+
+    nutrition = nutrition_lookup.calculate_item_nutrition("My Morning Oats", quantity=1.0, unit="serving")
+    assert nutrition["found"] is True
+    assert nutrition["calories"] == 650.0
+    assert nutrition["protein_g"] == 40.0
+    assert nutrition["carbs_g"] == 75.0
+    assert nutrition["fat_g"] == 20.0
+
+    meal_total = nutrition_lookup.compute_meal_total([{"food_name": "My Morning Oats", "quantity": 0.5, "unit": "serving"}])
+    assert meal_total["status"] == "found"
+    assert meal_total["calories"] == 325.0
+    assert meal_total["protein"] == 20.0
+    assert meal_total["carbs"] == 37.5
+    assert meal_total["fat"] == 10.0
+    assert custom["source"] == "user_custom"
+
+
+def test_custom_food_defaults_to_one_serving_when_quantity_not_stated():
+    parsed = meal_parser._parse_heuristic("anabolic bowl", modality="text")
+    assert parsed["foods"][0]["quantity"] == 1.0
+    assert parsed["foods"][0]["unit"] == "serving"
+
+
 def test_meal_parser_heuristic():
     text = "2 chapatis with 1 bowl dal and 100g paneer"
     res = meal_parser._parse_heuristic(text, modality="text")

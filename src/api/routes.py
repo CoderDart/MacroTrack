@@ -52,6 +52,16 @@ class KGQueryRequest(BaseModel):
     question: str
     dietary_preference: Optional[str] = None
 
+class CustomFoodRequest(BaseModel):
+    user_id: str = "default_user"
+    id: Optional[str] = None
+    name: str
+    description: Optional[str] = None
+    nutrition_basis: str = "serving"
+    serving_size: float = 1.0
+    serving_name: str = "1 serving"
+    nutrition: Dict[str, float]
+
 class WhatsAppWebhookRequest(BaseModel):
     From: Optional[str] = "whatsapp:+919876543210"
     Body: str
@@ -198,6 +208,23 @@ def search_foods_endpoint(query: str = "", limit: int = 20, category: Optional[s
 def match_food_endpoint(query: str):
     from src.data.repository import food_repository
     return food_repository.search_food(query).to_dict()
+
+@router.get("/foods/custom")
+def get_custom_foods_endpoint(user_id: str = "default_user"):
+    return {"results": db.get_custom_foods_for_user(user_id)}
+
+@router.post("/foods/custom")
+def save_custom_food_endpoint(req: CustomFoodRequest):
+    try:
+        food = db.save_custom_food(req.model_dump())
+        return {"success": True, "food": food}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@router.delete("/foods/custom/{food_id}")
+def delete_custom_food_endpoint(food_id: str, user_id: str = "default_user"):
+    db.delete_custom_food_by_user(food_id, user_id=user_id)
+    return {"success": True, "deleted": food_id}
 
 @router.get("/foods/{food_code}")
 def get_food_by_code_endpoint(food_code: str):

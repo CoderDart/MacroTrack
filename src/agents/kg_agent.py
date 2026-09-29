@@ -71,11 +71,33 @@ class KnowledgeGraphAgent:
         self.graph_builder = NutritionKnowledgeGraph()
         self._records = []
         self._sorted_values: Dict[str, List[float]] = {metric: [] for metric in METRICS}
-        for food in repository.get_all_foods():
+        self._rebuild_index()
+
+    def _build_values_for_food(self, food):
+        if getattr(food, "source", "") == "user_custom":
+            basis = getattr(food, "nutrition_basis", "serving")
+            profile = food.per_serving if basis == "serving" else food.per_100g
             values = {
-                metric: float(getattr(food.per_100g, definition["field"]))
+                metric: float(getattr(profile, definition["field"]))
                 for metric, definition in METRICS.items()
             }
+
+            serving_size = float(getattr(food, "serving_size", 1.0) or 1.0)
+            if basis == "serving" and serving_size > 0 and serving_size != 1.0:
+                values = {metric: value / serving_size * 100.0 for metric, value in values.items()}
+            return values
+
+        return {
+            metric: float(getattr(food.per_100g, definition["field"]))
+            for metric, definition in METRICS.items()
+        }
+
+    def _rebuild_index(self):
+        self._records = []
+        for values_dict in self._sorted_values.values():
+            values_dict.clear()
+        for food in self.repository.get_all_foods():
+            values = self._build_values_for_food(food)
             searchable = " ".join((food.name, food.english_name, *food.aliases)).casefold()
             record = {"food": food, "values": values, "searchable": self._normalize(searchable)}
             self._records.append(record)
@@ -83,6 +105,11 @@ class KnowledgeGraphAgent:
                 self._sorted_values[metric].append(value)
         for values in self._sorted_values.values():
             values.sort()
+
+    def _make_record(self, food):
+        values = self._build_values_for_food(food)
+        searchable = " ".join((food.name, food.english_name, *food.aliases)).casefold()
+        return {"food": food, "values": values, "searchable": self._normalize(searchable)}
 
     @staticmethod
     def _normalize(value: str) -> str:
@@ -194,21 +221,22 @@ class KnowledgeGraphAgent:
         if metric_definition and rank is not None:
             reason = (
                 f"Rank #{rank} by {metric_definition['label']}: "
-                f"{ranked_value:.1f} {metric_definition['unit']} / 100g"
+                f"{ranked_value:.1f} {metric_definition['unit']}"
             )
+        source_label = "User Custom" if getattr(food, "source", "") == "user_custom" else "INDB"
         return {
             "food_id": food.id,
             "food_code": food.food_code,
             "food_name": food.name,
             "category": food.category,
             "dietary": food.dietary,
-            "source": "INDB",
+            "source": source_label,
             "rank": rank,
             "ranked_nutrient": metric_definition["label"] if metric_definition else None,
             "ranked_value_per_100g": round(ranked_value, 1) if ranked_value is not None else None,
             "unit": metric_definition["unit"] if metric_definition else None,
             "nutrition_per_100g": {key: round(value, 1) for key, value in values.items()},
-            "selection_reason": reason or "Matched INDB food record",
+            "selection_reason": reason or ("Matched custom food record" if source_label == "User Custom" else "Matched INDB food record"),
             "protein_density_score": round(values["protein"] / max(values["calories"], 1.0), 3),
             "key_nutrients": [
                 METRICS[name]["label"] for name, value in values.items()
@@ -237,6 +265,7 @@ class KnowledgeGraphAgent:
         dietary_preference: Optional[str] = None,
         limit: int = 10,
     ) -> Dict[str, Any]:
+        self._rebuild_index()
         intent = self.understand_query(question)
         logger.info("INDB graph query=%r intent=%s", question, intent.to_dict())
 
@@ -249,7 +278,11 @@ class KnowledgeGraphAgent:
                 return self._base_response(question, intent, "not_found", NOT_FOUND_MESSAGE)
             if search.status == "ambiguous":
                 candidates = search.matches
-                if selected_food and any(food.name == selected_food for food in candidates):
+                if len({food.name for food in candidates}) == 1 and all(
+                    getattr(food, "source", "") == "user_custom" for food in candidates
+                ):
+                    selected = candidates[0]
+                elif selected_food and any(food.name == selected_food for food in candidates):
                     selected = next(food for food in candidates if food.name == selected_food)
                 else:
                     response = self._base_response(question, intent, "ambiguous", AMBIGUOUS_MESSAGE)
@@ -262,6 +295,8 @@ class KnowledgeGraphAgent:
                     response["candidates"] = [selected.name]
                     return response
             record = next((item for item in self._records if item["food"].food_code == selected.food_code), None)
+            if record is None and getattr(selected, "source", "") == "user_custom":
+                record = self._make_record(selected)
             results = [self._record_result(record, 1, None)] if record else []
             graph = self.graph_builder.build_query_graph(question, None, results)
             response = self._base_response(question, intent, "found")
@@ -273,11 +308,22 @@ class KnowledgeGraphAgent:
             entity_match = self.repository.search_food(intent.food_name)
             if entity_match.status == "not_found":
                 return self._base_response(question, intent, "not_found", NOT_FOUND_MESSAGE)
-
-        records = list(self._records)
-        if intent.food_name:
-            filter_tokens = set(intent.food_name.split())
-            records = [record for record in records if filter_tokens.issubset(set(record["searchable"].split()))]
+            if getattr(entity_match, "food", None) and getattr(entity_match.food, "source", "") == "user_custom":
+                records = [self._make_record(entity_match.food)]
+                filter_tokens = set((intent.food_name or question).split())
+                records = [record for record in records if filter_tokens.issubset(set(record["searchable"].split()))]
+            else:
+                records = list(self._records)
+                custom_matches = self.repository._search_custom_items(intent.food_name)
+                if custom_matches:
+                    records.extend(self._make_record(food) for food in custom_matches)
+                filter_tokens = set(intent.food_name.split())
+                records = [record for record in records if filter_tokens.issubset(set(record["searchable"].split()))]
+        else:
+            records = list(self._records)
+            if intent.food_name:
+                filter_tokens = set(intent.food_name.split())
+                records = [record for record in records if filter_tokens.issubset(set(record["searchable"].split()))]
         if dietary_preference and dietary_preference != "all":
             if dietary_preference == "ovo-veg":
                 allowed = {"veg", "ovo-veg"}

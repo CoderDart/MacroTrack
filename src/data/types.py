@@ -50,6 +50,51 @@ class FoodItem:
     per_serving: NutrientProfile = field(default_factory=NutrientProfile)
     dietary: str = "general"
     source: str = "Anuvaad INDB 2024.11"
+    nutrition_basis: str = "per_100g"
+    serving_size: float = 1.0
+    serving_name: str = "100g"
+    user_id: Optional[str] = None
+
+    @classmethod
+    def from_custom_food(cls, payload: Dict[str, Any]) -> "FoodItem":
+        nutrition = payload.get("nutrition") or {}
+        profile = NutrientProfile(
+            calories=float(nutrition.get("calories", 0.0) or 0.0),
+            protein_g=float(nutrition.get("protein", 0.0) or 0.0),
+            carbs_g=float(nutrition.get("carbohydrates", 0.0) or 0.0),
+            fat_g=float(nutrition.get("fat", 0.0) or 0.0),
+            fiber_g=float(nutrition.get("fiber", 0.0) or 0.0),
+            sodium_mg=float(nutrition.get("sodium", 0.0) or 0.0),
+            free_sugar_g=float(nutrition.get("sugar", 0.0) or 0.0),
+        )
+        basis = str(payload.get("nutrition_basis") or "serving").lower()
+        serving_size = float(payload.get("serving_size", 1.0) or 1.0)
+        serving_name = str(payload.get("serving_name") or "1 serving").strip() or "1 serving"
+        custom_id = str(payload.get("id") or payload.get("food_code") or payload.get("name") or "custom_food")
+        name = str(payload.get("name") or "Custom Food").strip()
+        description = str(payload.get("description") or "").strip()
+
+        item = cls(
+            id=custom_id,
+            food_code=str(custom_id),
+            name=name,
+            english_name=name,
+            aliases=[name, description] if description else [name],
+            category="Custom Food",
+            serving_unit=serving_name,
+            serving_weight_g=100.0 if basis == "100g" else float(serving_size or 1.0),
+            per_100g=profile if basis == "100g" else NutrientProfile(),
+            per_serving=profile if basis == "serving" else NutrientProfile(),
+            dietary="general",
+            source="user_custom",
+            nutrition_basis=basis,
+            serving_size=serving_size,
+            serving_name=serving_name,
+            user_id=payload.get("user_id"),
+        )
+        if description:
+            item.aliases = [alias for alias in list(dict.fromkeys([name, description, *item.aliases])) if alias and alias.strip()]
+        return item
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -65,7 +110,11 @@ class FoodItem:
             "per_100g": self.per_100g.to_dict(),
             "per_serving": self.per_serving.to_dict(),
             "dietary": self.dietary,
-            "source": self.source
+            "source": self.source,
+            "nutrition_basis": self.nutrition_basis,
+            "serving_size": self.serving_size,
+            "serving_name": self.serving_name,
+            "user_id": self.user_id,
         }
 
 @dataclass

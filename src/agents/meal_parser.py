@@ -209,11 +209,15 @@ Instructions:
         elif any(w in clean_text for w in ["snack", "tea", "coffee", "biscuit", "samosa"]):
             meal_type = "snack"
 
+        fallback_unit = "serving"
+        if any(keyword in clean_text for keyword in ["100g", "grams", "gram", "g ", "gm", "kg"]):
+            fallback_unit = "100g"
+
         return {
             "detected_modality": modality,
             "meal_type": meal_type,
-            "foods": foods if foods else [{"food_name": text.strip(), "quantity": 1.0, "unit": "100g", "confidence": 0.5}],
-            "confidence_notes": f"Parsed {len(foods)} items on 100g portion standard."
+            "foods": foods if foods else [{"food_name": text.strip(), "quantity": 1.0, "unit": fallback_unit, "confidence": 0.5}],
+            "confidence_notes": f"Parsed {len(foods)} items on a user-defined serving basis."
         }
 
 # Global meal parser instance

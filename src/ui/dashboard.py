@@ -376,31 +376,75 @@ with tabs[3]:
 
 # ----------------- TAB 5: Anuvaad Food Database Browser -----------------
 with tabs[4]:
-    st.subheader("📖 Anuvaad INDB Food Dataset (1,014 Items)")
-    st.caption("Complete official Indian food composition database (ICMR-NIN). All values per 100g.")
+    st.subheader("📖 Anuvaad Database Search")
+    st.caption("Official INDB foods plus your personal custom meals. Custom foods are stored locally and remain editable.")
 
     b_col1, b_col2 = st.columns([3, 1])
     with b_col1:
-        search_kw = st.text_input("Search Indian Food Name or Dish (e.g. roti, paneer, dal, tea)", value="")
+        search_kw = st.text_input("Search food or meal name", value="")
     with b_col2:
-        cat_filter = st.selectbox("Category Filter", ["All"] + food_repository.get_categories())
+        cat_filter = st.selectbox("Category Filter", ["All"] + food_repository.get_categories() + ["Custom Food"])
 
-    searched_foods = food_repository.search_foods(search_kw, limit=50, category=cat_filter)
+    if st.button("+ Add Custom Food / Meal", type="secondary"):
+        st.session_state["show_custom_food_form"] = True
+
+    if st.session_state.get("show_custom_food_form"):
+        with st.form("custom_food_form"):
+            st.markdown("#### Add Custom Food / Meal")
+            name = st.text_input("Food / Meal Name", value="")
+            description = st.text_area("What did you eat?", value="", placeholder="100g oats, 1 scoop whey, 1 banana and 1 teaspoon peanut butter")
+            basis = st.radio("Nutrition basis", ["Per serving", "Per 100g"], horizontal=True)
+            serving_size = st.number_input("Serving size", min_value=0.1, value=1.0, step=0.1)
+            serving_name = st.text_input("Serving name", value="1 serving")
+            st.markdown("#### Nutrition Information")
+            calories = st.number_input("Calories", min_value=0.0, value=0.0, step=1.0)
+            protein = st.number_input("Protein (g)", min_value=0.0, value=0.0, step=1.0)
+            carbs = st.number_input("Carbohydrates (g)", min_value=0.0, value=0.0, step=1.0)
+            fat = st.number_input("Fat (g)", min_value=0.0, value=0.0, step=1.0)
+            fiber = st.number_input("Fiber (g)", min_value=0.0, value=0.0, step=1.0)
+            sugar = st.number_input("Sugar (g)", min_value=0.0, value=0.0, step=1.0)
+            sodium = st.number_input("Sodium (mg)", min_value=0.0, value=0.0, step=1.0)
+            save_custom = st.form_submit_button("Save Custom Food")
+
+        if save_custom:
+            try:
+                db.save_custom_food({
+                    "user_id": user_id,
+                    "name": name,
+                    "description": description,
+                    "nutrition_basis": "serving" if basis == "Per serving" else "100g",
+                    "serving_size": serving_size,
+                    "serving_name": serving_name,
+                    "nutrition": {
+                        "calories": calories,
+                        "protein": protein,
+                        "carbohydrates": carbs,
+                        "fat": fat,
+                        "fiber": fiber,
+                        "sugar": sugar,
+                        "sodium": sodium,
+                    }
+                })
+                st.success(f'"{name}" has been added as a custom food.')
+                st.session_state["show_custom_food_form"] = False
+                st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+
+    searched_foods = food_repository.search_foods(search_kw, limit=50, category=cat_filter, user_id=user_id)
     st.write(f"Showing **{len(searched_foods)}** foods matching criteria:")
 
     if searched_foods:
         browse_df = pd.DataFrame([
             {
-                "Code": f.food_code,
+                "Source": "MY FOOD" if f.source == "user_custom" else "INDB",
                 "Food Name": f.name,
+                "Description": getattr(f, "aliases", [""])[1] if len(getattr(f, "aliases", ["", ""])) > 1 else "",
                 "Category": f.category,
-                "Energy (kcal/100g)": f.per_100g.calories,
-                "Protein (g/100g)": f.per_100g.protein_g,
-                "Carbs (g/100g)": f.per_100g.carbs_g,
-                "Fat (g/100g)": f.per_100g.fat_g,
-                "Fiber (g/100g)": f.per_100g.fiber_g,
-                "Calcium (mg/100g)": f.per_100g.calcium_mg,
-                "Iron (mg/100g)": f.per_100g.iron_mg
+                "Energy": round(f.per_100g.calories if f.source != "user_custom" else (f.per_serving.calories if getattr(f, "nutrition_basis", "serving") == "serving" else f.per_100g.calories), 1),
+                "Protein": round(f.per_100g.protein_g if f.source != "user_custom" else (f.per_serving.protein_g if getattr(f, "nutrition_basis", "serving") == "serving" else f.per_100g.protein_g), 1),
+                "Carbs": round(f.per_100g.carbs_g if f.source != "user_custom" else (f.per_serving.carbs_g if getattr(f, "nutrition_basis", "serving") == "serving" else f.per_100g.carbs_g), 1),
+                "Fat": round(f.per_100g.fat_g if f.source != "user_custom" else (f.per_serving.fat_g if getattr(f, "nutrition_basis", "serving") == "serving" else f.per_100g.fat_g), 1),
             }
             for f in searched_foods
         ])
